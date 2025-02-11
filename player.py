@@ -9,3 +9,7 @@ class Player():
 
     def chose_node(self, node):
         pass
+
+    def roll(self):
+        """ Roll dice """
+        self.dice = random.randint(1, 6) + random.randint(1, 6)

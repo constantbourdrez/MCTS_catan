@@ -5,7 +5,7 @@ import numpy as np
 def hexagon_coordinates(center, size=1):
     """Generates the coordinates of a hexagon based on its center."""
     angles = np.linspace(0, 2 * np.pi, 6, endpoint=False)
-    return [(center[0] + size * np.cos(angle), center[1] + size * np.sin(angle)) for angle in angles]
+    return [(center[1] + size * np.sin(angle), center[0] + size * np.cos(angle)) for angle in angles]
 
 def find_existing_node(position, position_to_id, tol=1e-6):
     """Finds an existing node close to a given position within a tolerance."""
@@ -14,7 +14,7 @@ def find_existing_node(position, position_to_id, tol=1e-6):
             return node_id
     return None
 
-def create_hexagonal_graph(n):
+def create_hexagonal_graph(n, verbose = False):
     """Creates a hexagonal tiling of `n` hexagons forming a Catan-like board."""
     G = nx.Graph()
     hex_size = 1
@@ -26,7 +26,7 @@ def create_hexagonal_graph(n):
             if abs(q + r) > n:
                 continue
             x = hex_size * (3 / 2) * q
-            y = hex_size * (np.sqrt(3) / 2) * (2 * r + q)
+            y =  hex_size * (np.sqrt(3) / 2) * (2 * r + q)
             centers.append((x, y))
 
     # Dictionary to store nodes based on their positions (avoids duplicates)
@@ -59,8 +59,9 @@ def create_hexagonal_graph(n):
     # Get the node positions for plotting
     positions = {node: G.nodes[node]['pos'] for node in G.nodes}
 
-    print(f"Created {len(G.nodes)} nodes and {len(G.edges)} edges.")
-    return G, positions
+    if verbose:
+        print(f"Created {len(G.nodes)} nodes and {len(G.edges)} edges.")
+    return G, positions, centers
 
 def rotate_positions(positions, angle):
     """Rotate all positions by the given angle in radians."""
@@ -68,9 +69,9 @@ def rotate_positions(positions, angle):
     return {node: (x * cos_a - y * sin_a, x * sin_a + y * cos_a) for node, (x, y) in positions.items()}
 
 if __name__ == "__main__":
-    hex_board, positions = create_hexagonal_graph(2)  # Use 3 instead of 6 for better visualization
-    positions = rotate_positions(positions, np.pi / 2)
+    hex_board, positions, centers = create_hexagonal_graph(2, verbose=True)  # Use 3 instead of 6 for better visualization
 
     plt.figure(figsize=(8, 8))
     nx.draw(hex_board, positions, with_labels=False, node_color='lightblue', edge_color='black', node_size=50)
+    plt.plot([-center[1] for center in centers], [center[0] for center in centers], 'ro')
     plt.show()

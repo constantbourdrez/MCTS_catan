@@ -58,45 +58,96 @@ class Board:
             "wheat": 19, "wood": 19
         }
         self.G, self.node_positions, self.centers = create_hexagonal_graph(2)
-        self.node_positions = rotate_positions(self.node_positions, np.pi / 2)
-        self.centers = [(-y, x) for x, y in self.centers]
+        self.positions_to_id = {pos: node for node, pos in self.node_positions.items()}
         self.initialize_board()
+
         self.plot_board()
+        self.build_initial_settlements()
+
 
     def initialize_board(self, *args):
         """ Initialize game board """
         resources = {"brick": 3, "sheep": 4, "stone": 3, "wheat": 4, "wood": 4}
         numbers = [10, 2, 9, 10, 8, 5, 11, 6, 5, 8, 9, 12, 6, 4, 3, 4, 3, 11]
-        self.tiles = {}
+        self.tiles = {i: None for i in range(len(self.centers))}
         has_thief = False
+
         for i, center in enumerate(self.centers):
+
             if center == (0.0, 0.0):
                 resource = "desert"
                 has_thief = True
+                number = 0
+
 
             else:
                 resource = np.random.choice(list(resources.keys()))
                 resources[resource] -= 1
                 if resources[resource] == 0:
                     del resources[resource]
-            # nodes = [Node((i, j)) for j in range(6)]
-            # edges = [Edge((i, j), (i, (j + 1) % 6)) for j in range(6)]
+                number = np.random.choice(numbers)
+                numbers.remove(number)
 
-            # tile = Tile(nodes, edges, center, numbers[i], resource, hexagon_coordinates(center, 1), i)
-            # self.tiles[i] = tile
+            # Find all the nodes that belong to the tile
+            corners = hexagon_coordinates(center, 1)
+            nodes = []
+            for corner in corners:
+                node_id = self.find_closest_node(corner)
+                nodes.append(node_id)
+            #Find all the edges that belong to the tile
+            edges = []
+            for j in range(6):
+                edge = (nodes[j], nodes[(j + 1) % 6])
+                edges.append(edge)
 
 
+
+            tile = Tile(nodes= nodes, edges= edges, center=center, number=number, resource=resource,
+                        coordinates= corners, tile_id = i)
+            tile.has_thief = has_thief
+            has_thief = False
+            self.tiles[i] = tile
+
+
+
+    def find_closest_node(self, corner):
+        """Find the closest existing node to the given corner coordinates."""
+        for existing_corner in self.positions_to_id:
+            if np.isclose(existing_corner[0], corner[0]) and np.isclose(existing_corner[1], corner[1]):
+                return self.positions_to_id[existing_corner]
+        raise KeyError(f"No matching node found for corner {corner}")
 
 
     def build_initial_settlements(self, *args):
         #Initialize new players with names and colors
         playerColors = ['black', 'darkslateblue', 'magenta4', 'orange1']
-        self.playerQueue.put(self.players[self.current_player])
-        self.players[self.current_player].color = playerColors[self.current_player-1]
-        order_players = [ self.current_player + i  if self.current_player + i - self.num_players < 0 else self.current_player + i - self.num_players for i in range(1, self.num_players)]
-        for i in order_players:
-            self.playerQueue.put(self.players[i])
-            self.players[i].color = playerColors[i-1]
+        for i in range(self.num_players -1):
+            newPlayer = Player(names[i], i, ai_or_not[i])
+            self.playerQueue.put(newPlayer)
+
+        self.current_player = self.num_players - 1
+        self.players = list(self.playerQueue.queue)  # Get players from queue
+        max_dice_player = {0: None}
+
+        # Determine the player with the highest dice roll
+        for player in self.players:
+            player.color = playerColors[player.number]
+            player.roll_dice()  # Roll dice for each player
+            if player.dice > max_dice_player[0]:
+                max_dice_player = {player.dice: player}
+
+        # Set the current player
+        self.current_player = max_dice_player[0].number
+
+        # Rotate the queue so that the highest dice roller is first
+        while self.players[0].number != self.current_player:
+            self.players.append(self.players.pop(0))  # Rotate left
+
+        # Clear and refill the queue with the new order
+        self.playerQueue = queue.Queue()
+        for player in self.players:
+            self.playerQueue.put(player)
+
         playerList = list(self.playerQueue.queue)
         #Build Settlements and roads of each player forwards
         for player_i in playerList:
@@ -156,10 +207,12 @@ class Board:
             # Display tile IDs at their center positions
             for tile in self.tiles.values():
                 if tile.number != 0:
-                    plt.text(tile.center[0], tile.center[1], str(tile.number)+", "+tile.resource, fontsize=12, ha='center', va='center', color='black', weight='bold')
-            # Color tiles according to their resource type
-            # colors = {"brick": "red", "sheep": "green", "stone": "gray", "wheat": "yellow", "wood": "brown", "desert": "orange"}
-            # for tile in self.tiles.values():
-            #     #fill tile with the desired color
-            #     plt.fill(*zip(*tile.coordinates.values()), colors[tile.resource], edgecolor='black', linewidth=2)
+                    #rotation by oriented degree pi/2 because this is how de did the hexagon coordinates
+                    plt.text(-tile.center[1], tile.center[0], str(tile.number)+", "+tile.resource, fontsize=12, ha='center', va='center', color='black', weight='bold')
+            #Color tiles according to their resource type
+            colors = {"brick": "red", "sheep": "green", "stone": "gray", "wheat": "yellow", "wood": "brown", "desert": "orange"}
+            for tile in self.tiles.values():
+                list_x = np.array([element[0] for element in tile.coordinates])
+                list_y = np.array([element[1] for element in tile.coordinates])
+                plt.fill(list_x, list_y, colors[tile.resource], edgecolor='black', linewidth=2)
             plt.show()
