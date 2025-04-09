@@ -1,12 +1,18 @@
 import random
 import numpy as np
-from board import Structure  
+ 
+
+class Structure:
+    none = "none"
+    road = "road"
+    house = "house"
+    city = "city"
 
 class Player:
-    def __init__(self, name, number, is_ai=False):
+    def __init__(self, name, number, isAI=False):
         self.name = name
         self.number = number
-        self.is_ai = is_ai
+        self.isAI = isAI
         self.resources = {"brick": 0, "sheep": 0, "stone": 0, "wheat": 0, "wood": 0}
         self.cards = {"buildRoad": 0, "knight": 0, "monopoly": 0, "plenty": 0, "victoryPoint": 0}
         self.dice = 0
@@ -85,3 +91,29 @@ class Player:
         chosen_edge.player = self
         self.roads.append(chosen_edge)
         print(f"{self.name} (AI) built an initial road between nodes {chosen_edge.nodes[0].node_id} and {chosen_edge.nodes[1].node_id}")
+        
+    def reset(self):
+        # Reset all resource counts to 0
+        self.resources = {
+            "brick": 0,
+            "wood": 0,
+            "wheat": 0,
+            "sheep": 0,
+            "stone": 0
+        }
+
+        # Reset structures
+        self.settlements = []
+        self.cities = []
+        self.roads = []
+
+        # Reset dev cards & special points
+        self.cards = {"buildRoad": 0, "knight": 0, "monopoly": 0, "plenty": 0, "victoryPoint": 0}
+        self.dev_cards = 0
+        self.knight_count = 0
+        self.development_points = 0
+
+        # Reset bonus flags
+        self.longest_road = False
+        self.largest_army = False
+

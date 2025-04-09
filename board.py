@@ -3,15 +3,10 @@ import networkx as nx
 import numpy as np
 import queue
 
-from player import Player
+from player import Player, Structure
 from geometric_utils import hexagon_coordinates, create_hexagonal_graph, rotate_positions
 
-# Basic types for board elements
-class Structure:
-    none = "none"
-    road = "road"
-    house = "house"
-    city = "city"
+
 
 class Tile:
     def __init__(self, nodes, edges, center, number, resource, coordinates, tile_id):
@@ -44,15 +39,25 @@ class Edge:
         self.structure = Structure.none
         self.player = None
         self.adjacent_tiles = []  # Tiles sharing this edge
+        
+    def is_buildable(self, player):
+        # Edge is buildable if it is unoccupied and touches at least one node with the player's settlement or city.
+        if self.structure != Structure.none:
+            return False
+        for node in self.nodes:
+            if node.player == player and node.structure in [Structure.house, Structure.city]:
+                return True
+        return False
 
 class Board:
-    def __init__(self, names, ai_or_not):
+    def __init__(self, names, ai_or_not, verbose = True):
         self.num_players = len(names)
         self.gameOver = False
-        self.maxPoints = 10
+        self.maxPoints = 13
         self.turn = 1
         self.playerQueue = queue.Queue(self.num_players)
         self.gameSetup = True
+        self.verbose = verbose
 
         # Bank of cards (resource counts, development cards, etc.)
         self.bank = {
@@ -77,8 +82,55 @@ class Board:
         # Now that edges exist, update each tile’s edge list to refer to Edge objects.
         self.update_tile_edges()
 
-        self.plot_board()
+        
         self.build_initial_settlements(names, ai_or_not)
+        self.plot_board()
+        
+    def reset(self):
+        """
+        Reset the board and all player state for a new game,
+        preserving the player objects and their identities (e.g. colors, AI flags).
+        """
+        # Reset game state
+        self.gameOver = False
+        self.turn = 1
+        self.gameSetup = True
+
+        # Recreate graph structure and tiles
+        self.G, self.node_positions, self.centers = create_hexagonal_graph(2)
+        
+        # Recreate Nodes
+        self.nodes = {}
+        for node_id, pos in self.node_positions.items():
+            self.nodes[node_id] = Node(coord=pos, node_id=node_id)
+        self.positions_to_node = {pos: self.nodes[node_id] for node_id, pos in self.node_positions.items()}
+
+        # Reset tiles, edges
+        self.initialize_board()
+        self.create_edges()
+        self.update_tile_edges()
+
+        # Reset the bank
+        self.bank = {
+            "brick": 19, "buildRoad": 2, "knight": 13, "monopoly": 2,
+            "plenty": 1, "sheep": 19, "stone": 19, "victoryPoint": 5,
+            "wheat": 19, "wood": 19
+        }
+
+        # Reset player states
+        for player in self.players:
+            player.reset()
+
+        # Re-run setup phase
+        self.build_initial_settlements([p.name for p in self.players], [p.isAI for p in self.players], reset=True)
+        
+
+  # No need to recreate players
+
+        # Optional: plot the board
+        # self.plot_board(title="Reset Board")
+
+
 
     def initialize_board(self):
         """ Initialize game board tiles with resources and numbers """
@@ -161,22 +213,39 @@ class Board:
 
     def get_valid_nodes(self, player=None):
         """
-        Determine valid nodes for a new settlement.
-        A valid node has no structure and is at least 2 nodes away from any other settlement.
+        Determine valid nodes for building a settlement.
+        A valid node must:
+        - Be unoccupied
+        - Be at least 2 nodes away from any other settlement/city
+        - Be adjacent to one of the player's roads (except during initial setup)
         """
         valid_nodes = []
         for node in self.nodes.values():
             if node.structure != Structure.none:
                 continue
-            # Check distance rule: no adjacent node already occupied
+
+            # 1. Distance rule: no adjacent node is occupied
             conflict = False
             for neighbor in self.get_neighbor_nodes(node):
                 if neighbor.structure != Structure.none:
                     conflict = True
                     break
-            if not conflict:
-                valid_nodes.append(node)
+            if conflict:
+                continue
+
+            # 2. Road connection requirement (skip if game setup)
+            if not self.gameSetup:
+                connected = False
+                for edge in self.get_edges_of_node(node):
+                    if edge.structure == Structure.road and edge.player == player:
+                        connected = True
+                        break
+                if not connected:
+                    continue
+
+            valid_nodes.append(node)
         return valid_nodes
+
 
     def get_valid_edges(self, player):
         """
@@ -210,20 +279,23 @@ class Board:
                 incident_edges.append(edge)
         return incident_edges
 
-    def build_initial_settlements(self, names, ai_or_not):
+    def build_initial_settlements(self, names, ai_or_not, reset = False):
         """
         Build the initial settlements and roads.
         For human players the board will call player.choose_node and choose_edge.
         For AI players, their initial_setup method is used.
         """
-        playerColors = ['black', 'darkslateblue', 'magenta4', 'orange1']
+        playerColors = ['black', 'darkblue', 'purple', 'orange']
         # Create players and add them to the queue
-        for i in range(self.num_players):
-            newPlayer = Player(names[i], i, ai_or_not[i])
-            newPlayer.color = playerColors[i % len(playerColors)]
-            self.playerQueue.put(newPlayer)
+        if reset:
+            pass
+        else:
+            for i in range(self.num_players):
+                newPlayer = Player(names[i], i, ai_or_not[i])
+                newPlayer.color = playerColors[i % len(playerColors)]
+                self.playerQueue.put(newPlayer)
 
-        self.players = list(self.playerQueue.queue)
+            self.players = list(self.playerQueue.queue)
 
         # Decide starting order using a dice roll
         max_dice = -1
@@ -275,7 +347,8 @@ class Board:
             chosen_node.structure = Structure.house
             chosen_node.player = player
             player.settlements.append(chosen_node)
-            print(f"{player.name} built a settlement at node {chosen_node.node_id}")
+            if self.verbose:
+                print(f"{player.name} built a settlement at node {chosen_node.node_id}")
         elif action == 'ROAD':
             valid_edges = self.get_valid_edges(player)
             chosen_edge = player.choose_edge(self, valid_edges)
@@ -284,7 +357,8 @@ class Board:
             chosen_edge.structure = Structure.road
             chosen_edge.player = player
             player.roads.append(chosen_edge)
-            print(f"{player.name} built a road between nodes {chosen_edge.nodes[0].node_id} and {chosen_edge.nodes[1].node_id}")
+            if self.verbose:
+                print(f"{player.name} built a road between nodes {chosen_edge.nodes[0].node_id} and {chosen_edge.nodes[1].node_id}")
         elif action == 'CITY':
             # Upgrade a settlement (house) to a city if the player owns it.
             valid_settlements = [node for node in player.settlements if node.structure == Structure.house]
@@ -294,7 +368,8 @@ class Board:
             chosen_node.structure = Structure.city
             player.cities.append(chosen_node)
             player.settlements.remove(chosen_node)
-            print(f"{player.name} upgraded settlement at node {chosen_node.node_id} to a city")
+            if self.verbose:    
+                print(f"{player.name} upgraded settlement at node {chosen_node.node_id} to a city")
         else:
             raise ValueError("Unknown build action")
 
@@ -305,12 +380,14 @@ class Board:
         for tile in settlement.tiles:
             if tile.resource != "desert":
                 player.add_resource(tile.resource, 1)
-                print(f"{player.name} received 1 {tile.resource} from tile {tile.tile_id}")
+                if self.verbose:
+                    print(f"{player.name} received 1 {tile.resource} from tile {tile.tile_id}")
 
     def roll_dice(self):
         """Simulate rolling two dice and process resource distribution."""
         dice = np.random.randint(1, 7) + np.random.randint(1, 7)
-        print(f"Dice rolled: {dice}")
+        if self.verbose:
+            print(f"Dice rolled: {dice}")
         if dice == 7:
             self.handle_robber()
         else:
@@ -325,10 +402,12 @@ class Board:
                 for node in tile.nodes:
                     if node.structure == Structure.house:
                         node.player.add_resource(tile.resource, 1)
-                        print(f"{node.player.name} receives 1 {tile.resource} from tile {tile.tile_id}")
+                        if self.verbose:  
+                            print(f"{node.player.name} receives 1 {tile.resource} from tile {tile.tile_id}")
                     elif node.structure == Structure.city:
                         node.player.add_resource(tile.resource, 2)
-                        print(f"{node.player.name} receives 2 {tile.resource} from tile {tile.tile_id}")
+                        if self.verbose:
+                            print(f"{node.player.name} receives 2 {tile.resource} from tile {tile.tile_id}")
 
     def handle_robber(self):
         """Handle the robber when a 7 is rolled."""
@@ -340,21 +419,14 @@ class Board:
         non_desert_tiles = [tile for tile in self.tiles.values() if tile.resource != "desert"]
         chosen_tile = np.random.choice(non_desert_tiles)
         chosen_tile.has_thief = True
-        print(f"Robber moved to tile {chosen_tile.tile_id}")
-
-    def check_winner(self):
-        """Check if any player has reached or exceeded the victory point threshold."""
-        for player in self.players:
-            if player.victory_points() >= self.maxPoints:
-                self.gameOver = True
-                print(f"Player {player.name} wins with {player.victory_points()} points!")
-                return player
-        return None
+        if self.verbose:
+            print(f"Robber moved to tile {chosen_tile.tile_id}")
 
     def next_turn(self):
         """Advance to the next turn."""
         self.turn += 1
-        print(f"Turn {self.turn}")
+        if self.verbose:
+            print(f"Turn {self.turn}")
         # Rotate the player queue
         self.players.append(self.players.pop(0))
         self.playerQueue = queue.Queue()
@@ -365,6 +437,15 @@ class Board:
         dice = self.roll_dice()
         # (Additional phases like trading and building may be implemented here.)
         return current_player
+    
+    def available_road_placements(self, player):
+        valid_edges = []
+        for edge in self.edges.values():
+            # Assume edge has an attribute like is_buildable(player)
+            if edge.is_buildable(player):
+                valid_edges.append(edge)
+        return valid_edges
+
     
     def trade_with_bank(self, player, offer_resource, request_resource, ratio=4):
         """
@@ -384,7 +465,8 @@ class Board:
 
         # Check if bank has at least 1 unit of the requested resource.
         if self.bank.get(request_resource, 0) < 1:
-            print(f"The bank does not have any {request_resource} available for trade.")
+            if self.verbose:
+                print(f"The bank does not have any {request_resource} available for trade.")
             return False
 
         # Execute the trade: subtract resources from player and add the offered resources to the bank.
@@ -394,27 +476,133 @@ class Board:
         # Give one unit of the requested resource to the player.
         player.resources[request_resource] = player.resources.get(request_resource, 0) + 1
         self.bank[request_resource] -= 1
-
-        print(f"{player.name} traded {ratio} {offer_resource} for 1 {request_resource} with the bank.")
+        if self.verbose:
+            print(f"{player.name} traded {ratio} {offer_resource} for 1 {request_resource} with the bank.")
         return True
+    
+    def dfs_longest(self, player, current_node, coming_from_edge, visited_edges):
+        """Recursively traverse player's road network starting from current_node.
+        Avoid reusing an edge (using visited_edges) to compute the length of the chain."""
+        max_length = 0
+        for edge in self.get_edges_of_node(current_node):
+            # Consider only edges that belong to the player and that haven't been used in this chain.
+            if edge.player == player and edge != coming_from_edge and edge not in visited_edges:
+                new_visited = visited_edges.union({edge})
+                # Determine the other end of the edge.
+                next_node = edge.nodes[0] if edge.nodes[1] == current_node else edge.nodes[1]
+                length = 1 + self.dfs_longest(player, next_node, edge, new_visited)
+                if length > max_length:
+                    max_length = length
+        return max_length
 
-    def plot_board(self):
-        """Plot the game board."""
-        plt.figure(figsize=(8, 8))
-        nx.draw(self.G, self.node_positions, with_labels=False, node_color='lightblue', edge_color='gray')
-        # Display tile numbers and resources at their center positions.
+    def compute_longest_road(self, player):
+        """Compute the longest continuous road length for the given player."""
+        best = 0
+        # Consider each road's endpoints as a starting point.
+        for edge in player.roads:
+            for node in edge.nodes:
+                current_length = self.dfs_longest(player, node, None, set())
+                if current_length > best:
+                    best = current_length
+        return best
+
+    def update_longest_road(self):
+        """Update players’ longest road flags.
+        A player must have a continuous road length of at least 5 to claim the bonus."""
+        best_length = 0
+        best_player = None
+        for player in self.players:
+            lr = self.compute_longest_road(player)
+            # Only consider roads of length >= 5 as valid for the bonus.
+            if lr > best_length and lr >= 5:
+                best_length = lr
+                best_player = player
+        for player in self.players:
+            player.longest_road = (player == best_player)
+            # Optionally, you can also log the longest road length for debugging:
+            # print(f"{player.name} longest road: {self.compute_longest_road(player)}")
+    
+    def update_largest_army(self):
+        """Update players’ largest army flags.
+        A player must have at least 3 played knight cards to claim the bonus."""
+        best = 0
+        best_player = None
+        for player in self.players:
+            # Assume player.knight_count holds the number of played knight cards.
+            count = getattr(player, "knight_count", 0)
+            if count >= 3 and count > best:
+                best = count
+                best_player = player
+        for player in self.players:
+            player.largest_army = (player == best_player)
+    
+    def check_winner(self):
+        """Check if any player has reached or exceeded the victory point threshold.
+        This method now updates longest road and largest army status before comparing victory points.
+        It assumes that player.victory_points() includes bonus points for longest road and largest army."""
+        self.update_longest_road()
+        self.update_largest_army()
+        for player in self.players:
+            if player.victory_points() >= self.maxPoints:
+                self.gameOver = True
+                print(f"Player {player.name} wins with {player.victory_points()} points!")
+                return player
+        return None
+
+
+    def plot_board(self, show=True, title="Catan Board"):
+        """Plot the game board, including tiles, roads, settlements, and cities."""
+        plt.figure(figsize=(10, 10))
+        ax = plt.gca()
+        ax.set_title(title)
+
+        # Base: draw the graph layout
+        nx.draw(self.G, self.node_positions, with_labels=False, node_color='lightblue', edge_color='gray', node_size=100)
+
+        # 1. Draw tiles with color fill
+        colors = {"brick": "red", "sheep": "green", "stone": "gray", "wheat": "khaki", "wood": "saddlebrown", "desert": "orange"}
         for tile in self.tiles.values():
+            x = [corner[0] for corner in tile.coordinates]
+            y = [corner[1] for corner in tile.coordinates]
+            plt.fill(x, y, colors.get(tile.resource, "white"), edgecolor='black', linewidth=2)
             if tile.number != 0:
-                # Rotate text positions to match hexagon orientation if needed.
-                plt.text(-tile.center[1], tile.center[0], f"{tile.number}, {tile.resource}",
-                         fontsize=12, ha='center', va='center', color='black', weight='bold')
-        # Fill tiles with colors based on resource type.
-        colors = {"brick": "red", "sheep": "green", "stone": "gray", "wheat": "yellow", "wood": "brown", "desert": "orange"}
-        for tile in self.tiles.values():
-            list_x = np.array([coord[0] for coord in tile.coordinates])
-            list_y = np.array([coord[1] for coord in tile.coordinates])
-            plt.fill(list_x, list_y, colors[tile.resource], edgecolor='black', linewidth=2)
-        plt.show()
+                plt.text(tile.center[1], tile.center[0], f"{tile.number}", fontsize=12, ha='center', va='center', color='black', weight='bold')
+            if tile.has_thief:
+                plt.text(tile.center[1], tile.center[0] - 0.3, "👺", fontsize=16, ha='center')
+
+        # 2. Draw roads
+        for edge in self.edges.values():
+            if edge.structure == Structure.road and edge.player is not None:
+                x1, y1 = edge.nodes[0].position
+                x2, y2 = edge.nodes[1].position
+                plt.plot([x1, x2], [y1, y2], color=edge.player.color, linewidth=4, alpha=0.8)
+
+        # 3. Draw settlements and cities
+        for node in self.nodes.values():
+            x, y = node.position
+            if node.structure == Structure.house and node.player is not None:
+                plt.scatter(x, y, c=node.player.color, s=150, edgecolors='black', zorder=3, label="Settlement")
+            elif node.structure == Structure.city and node.player is not None:
+                plt.scatter(x, y, c=node.player.color, s=200, edgecolors='black', marker='s', zorder=3, label="City")
+
+        # 4. Final cleanup
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        # Legend (optional: only once per player)
+        legend_elements = []
+        seen_colors = set()
+        for player in self.players:
+            if player.color not in seen_colors:
+                legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', label=player.name,
+                                                markerfacecolor=player.color, markersize=10))
+                seen_colors.add(player.color)
+        plt.legend(handles=legend_elements, loc='upper right')
+
+        if show:
+            plt.show()
+            
+        
 
 # If running as a script, you might create a board instance and simulate a few turns:
 if __name__ == "__main__":
