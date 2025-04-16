@@ -51,7 +51,6 @@ class DeepCatanNet(nn.Module):
         self.combined_fc = nn.Linear(512, 256)
         self.dropout = nn.Dropout(0.5)
         self.policy_head = nn.Linear(256, action_size)
-        # Changed value head to output a single scalar.
         self.value_head = nn.Linear(256, 1)
         
     def forward(self, board, game_info):
@@ -127,8 +126,6 @@ class CatanGame:
         board = np.zeros((self.board_channels, self.board_height, self.board_width), dtype=np.float32)
         game_info = np.zeros((self.game_info_dim,), dtype=np.float32)
         # --- Encoding board features (tiles, roads, settlements, etc.) ---
-        # ... Your detailed implementation goes here ...
-        # **Encode Player Information**
         player = self.current_player
         game_info[0:self.num_players] = [p.victory_points() for p in self.board.players]
         resource_types = ["brick", "wood", "wheat", "sheep", "stone"]
@@ -309,7 +306,6 @@ class MCTS:
         game_info_tensor = torch.FloatTensor(game_info).unsqueeze(0)
         with torch.no_grad():
             log_policy, value = self.net(state_tensor, game_info_tensor)
-        # Since the network now returns a single scalar per state, use value.item()
         leaf_value = value.item()
         if not self.game.is_terminal():
             policy = torch.exp(log_policy).squeeze(0).numpy()
@@ -350,7 +346,7 @@ def self_play_episode(game, net, local_value_net, mcts_simulations=50, temperatu
     while not done and episode_length < max_moves:
         root = mcts.search(state)
         action_probs = mcts.get_action_probabilities(root, temperature)
-        examples.append((state, action_probs, None))  # Reward will be assigned later
+        examples.append((state, action_probs, None)) 
         action = np.random.choice(range(game.action_size), p=action_probs)
         state, reward, done, _ = game.step(action)
         episode_length += 1
@@ -381,7 +377,7 @@ def train_deepnet(net, optimizer, training_data, batch_size=32, epochs=5):
             out_policies, out_values = net(boards, game_infos)
             # Policy loss: negative log likelihood
             loss_policy = -torch.mean(torch.sum(target_policies * out_policies, dim=1))
-            # Value loss: use MSE directly between scalar outputs and targets.
+            # Value loss
             loss_value = F.mse_loss(out_values, target_values)
             loss = loss_policy + loss_value
             loss.backward()
@@ -454,7 +450,6 @@ def main_training_loop():
         writer.add_scalar("Train/GlobalAverageLoss", avg_loss, iteration)
         avg_local_loss = train_local_value_net(local_value_net, optimizer_local, local_training_data, batch_size=32, epochs=5)
         writer.add_scalar("Train/LocalAverageLoss", avg_local_loss, iteration)
-        # Optionally, clear local training data to train fresh every iteration.
         local_training_data = []
         if (iteration + 1) % 100 == 0:
             torch.save(net.state_dict(), f"deepcatan_net_iter{iteration+1}.pth")
